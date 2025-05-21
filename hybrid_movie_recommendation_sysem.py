@@ -75,17 +75,23 @@ def get_hybrid_recommendations(title, user_id, top_n=10):
         return pd.DataFrame({'Error': ['User ID not found.']})
 
     user_idx = list(user_ids).index(user_id)
-    user_ratings = predicted_ratings[user_idx]
+    user_ratings = predicted_ratings[user_idx]  # NumPy array
+
+    # map movieId -> index
+    movie_id_to_index = {movie_id: idx for idx, movie_id in enumerate(movie_ids)}
 
     content_recs = content_recs.copy()
     content_recs = content_recs[content_recs['movieId'].isin(movie_ids)]
+    
     content_recs['predicted_rating'] = content_recs['movieId'].apply(
-        lambda x: user_ratings.get(x, np.nan)
+        lambda x: user_ratings[movie_id_to_index[x]] if x in movie_id_to_index else np.nan
     )
 
     # Hybrid score: 50% content similarity + 50% collaborative predicted rating
     content_recs['hybrid_score'] = (content_recs['score'] + content_recs['predicted_rating']) / 2
+
     return content_recs.sort_values('hybrid_score', ascending=False).head(top_n)[['movieId', 'title', 'hybrid_score']]
+
 
 # ================== Evaluation Functions ==================
 
