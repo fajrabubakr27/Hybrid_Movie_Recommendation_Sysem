@@ -137,7 +137,7 @@ def predict_hybrid_rating(user_id, movie_id):
 
     if user_id in user_ids and movie_id in movie_ids:
         user_idx = list(user_ids).index(user_id)
-        movie_idx = list(movie_ids).get_loc(movie_id)
+        movie_idx = pd.Index(movie_ids).get_loc(movie_id)
         collab_rating = predicted_ratings[user_idx][movie_idx]
 
     content_rating = predict_content_rating(user_id, movie_id)
