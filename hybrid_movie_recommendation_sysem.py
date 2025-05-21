@@ -80,7 +80,7 @@ def get_hybrid_recommendations(title, user_id, top_n=10):
     content_recs = content_recs.copy()
     content_recs = content_recs[content_recs['movieId'].isin(movie_ids)]
     content_recs['predicted_rating'] = content_recs['movieId'].apply(
-        lambda x: user_ratings[list(movie_ids).get_loc(x)]
+        lambda x: user_ratings.get(x, np.nan)
     )
 
     # Hybrid score: 50% content similarity + 50% collaborative predicted rating
