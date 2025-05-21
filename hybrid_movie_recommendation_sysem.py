@@ -95,7 +95,7 @@ def evaluate_on_test(test_df, predicted_ratings, user_ids, movie_ids):
         uid, mid, true_rating = row['userId'], row['movieId'], row['rating']
         if uid in user_ids and mid in movie_ids:
             user_idx = list(user_ids).index(uid)
-            movie_idx = list(movie_ids).get_loc(mid)
+            movie_idx = movie_ids.get_loc(mid)
             pred_rating = predicted_ratings[user_idx][movie_idx]
             y_true.append(true_rating)
             y_pred.append(pred_rating)
