@@ -78,12 +78,44 @@ def get_hybrid_recommendations(title, user_id, top_n=10):
     content_recs['hybrid_score'] = (content_recs['score'] + content_recs['predicted_rating']) / 2
     return content_recs.sort_values('hybrid_score', ascending=False).head(top_n)[['movieId', 'title', 'hybrid_score']]
 
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from math import sqrt
+
+# Evaluate RMSE and MAE
+actual = rating_matrix.values[rating_matrix.values.nonzero()]
+predicted = predicted_ratings[rating_matrix.values.nonzero()]
+
+rmse = sqrt(mean_squared_error(actual, predicted))
+mae = mean_absolute_error(actual, predicted)
+
+
+def evaluate_top_n(user_id, top_n=10, threshold=4.0):
+    if user_id not in user_ids:
+        return None
+    
+    user_idx = list(user_ids).index(user_id)
+    actual_ratings = rating_matrix.iloc[user_idx]
+    predicted_ratings_user = predicted_ratings[user_idx]
+    
+    actual_relevant = set(actual_ratings[actual_ratings >= threshold].index)
+    top_indices = predicted_ratings_user.argsort()[::-1][:top_n]
+    predicted_top_n = set(movie_ids[top_indices])
+    
+    true_positives = len(actual_relevant & predicted_top_n)
+    precision = true_positives / len(predicted_top_n) if predicted_top_n else 0
+    recall = true_positives / len(actual_relevant) if actual_relevant else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if precision + recall else 0
+    
+    return precision, recall, f1
+
+
+
 # واجهة Streamlit
 st.set_page_config(page_title="🎬 Hybrid Movie Recommender", layout="centered")
 st.title("🎬 Hybrid Movie Recommendation System")
 
 option = st.selectbox("Select recommendation type:",
-                      ["Based on Movie Title", "Based on User ID", "Hybrid Recommendation"])
+                      ["Based on Movie Title", "Based on User ID", "Hybrid Recommendation","Evaluate System"])
 
 if option == "Based on Movie Title":
     movie_name = st.text_input("Enter movie title:")
@@ -100,6 +132,23 @@ elif option == "Based on User ID":
         st.write(f"Recommendations for User ID: **{user_id}**")
         st.dataframe(get_collab_recommendations(user_id))
 
+elif option == "Evaluate System":
+    st.subheader("🔍 Evaluation Metrics")
+    
+    st.write(f"**RMSE:** {rmse:.4f}")
+    st.write(f"**MAE:** {mae:.4f}")
+    
+    sample_user_ids = [1, 2, 3]
+    st.write("Top-N Recommendation Evaluation (for sample users):")
+    for uid in sample_user_ids:
+        metrics = evaluate_top_n(uid)
+        if metrics:
+            p, r, f1 = metrics
+            st.write(f"User {uid} - Precision: {p:.2f}, Recall: {r:.2f}, F1-Score: {f1:.2f}")
+        else:
+            st.write(f"User {uid} not found.")
+
+
 else:  # Hybrid
     user_id = st.number_input("Enter user ID:", min_value=1, step=1, key="hybrid_user")
     movie_name = st.text_input("Enter movie title:", key="hybrid_title")
@@ -109,3 +158,4 @@ else:  # Hybrid
             st.dataframe(get_hybrid_recommendations(movie_name, user_id))
         else:
             st.warning("Please enter a movie title.")
+
