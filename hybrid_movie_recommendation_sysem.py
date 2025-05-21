@@ -185,7 +185,7 @@ option = st.selectbox("Select recommendation type:",
                       ["Based on Movie Title", "Based on User ID", "Hybrid Recommendation", "Evaluate System"])
 
 if option == "Based on Movie Title":
-    movie_name = st.text_input("Enter movie title:")
+    movie_name = st.text_input("Enter movie title:", value="Toy Story (1995)")
     if st.button("Get Recommendations"):
         if movie_name:
             st.write(f"Recommendations similar to: **{movie_name}**")
@@ -194,14 +194,14 @@ if option == "Based on Movie Title":
             st.warning("Please enter a movie title.")
 
 elif option == "Based on User ID":
-    user_id = st.number_input("Enter user ID:", min_value=1, step=1)
+    user_id = st.number_input("Enter user ID:", min_value=1, step=1, value=1)
     if st.button("Get Recommendations"):
         st.write(f"Recommendations for User ID: **{user_id}**")
         st.dataframe(get_collab_recommendations(user_id))
 
 elif option == "Hybrid Recommendation":
-    user_id = st.number_input("Enter user ID:", min_value=1, step=1, key="hybrid_user")
-    movie_name = st.text_input("Enter movie title:", key="hybrid_title")
+    user_id = st.number_input("Enter user ID:", min_value=1, step=1, value=1, key="hybrid_user")
+    movie_name = st.text_input("Enter movie title:", value="Toy Story (1995)", key="hybrid_title")
     if st.button("Get Recommendations"):
         if movie_name:
             st.write(f"Hybrid recommendations for Movie: **{movie_name}**, User ID: **{user_id}**")
