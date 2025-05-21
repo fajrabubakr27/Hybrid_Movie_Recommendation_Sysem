@@ -9,36 +9,43 @@ Original file is located at
 
 #!pip install streamlit
 
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
 from sklearn.metrics.pairwise import linear_kernel
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import TruncatedSVD
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from math import sqrt
 
-# البيانات
+# Load data
 movies = pd.read_csv("movies.csv")
 ratings = pd.read_csv("ratings.csv")
 
-# TF-IDF Vectorizer
+# Split ratings into training (80%) and testing (20%)
+train_data, test_data = train_test_split(ratings, test_size=0.2, random_state=42)
+
+# TF-IDF for content-based filtering
 tfidf = TfidfVectorizer(stop_words='english')
 movies['genres'] = movies['genres'].fillna('')
 tfidf_matrix = tfidf.fit_transform(movies['genres'])
 cosine_sim = linear_kernel(tfidf_matrix, tfidf_matrix)
-
-# index mapping
 indices = pd.Series(movies.index, index=movies['title']).drop_duplicates()
 
-# SVD Model
-rating_matrix = ratings.pivot_table(index='userId', columns='movieId', values='rating').fillna(0)
+# Create rating matrix from training data
+rating_matrix = train_data.pivot_table(index='userId', columns='movieId', values='rating').fillna(0)
 
-from sklearn.decomposition import TruncatedSVD
+# Collaborative Filtering using SVD
 svd = TruncatedSVD(n_components=20)
 svd_matrix = svd.fit_transform(rating_matrix)
-
 predicted_ratings = np.dot(svd_matrix, svd.components_)
 
 movie_ids = rating_matrix.columns
 user_ids = rating_matrix.index
+
+# ================== Recommendation Functions ==================
 
 def get_content_recommendations(title, top_n=10):
     idx = indices.get(title)
@@ -72,50 +79,110 @@ def get_hybrid_recommendations(title, user_id, top_n=10):
 
     content_recs = content_recs.copy()
     content_recs = content_recs[content_recs['movieId'].isin(movie_ids)]
-    content_recs['predicted_rating'] = content_recs['movieId'].apply(lambda x: user_ratings[list(movie_ids).index(x)])
+    content_recs['predicted_rating'] = content_recs['movieId'].apply(
+        lambda x: user_ratings[list(movie_ids).get_loc(x)]
+    )
 
-    # weighted hybrid score (50% content + 50% collab)
+    # Hybrid score: 50% content similarity + 50% collaborative predicted rating
     content_recs['hybrid_score'] = (content_recs['score'] + content_recs['predicted_rating']) / 2
     return content_recs.sort_values('hybrid_score', ascending=False).head(top_n)[['movieId', 'title', 'hybrid_score']]
 
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-from math import sqrt
+# ================== Evaluation Functions ==================
 
-# Evaluate RMSE and MAE
-actual = rating_matrix.values[rating_matrix.values.nonzero()]
-predicted = predicted_ratings[rating_matrix.values.nonzero()]
+def evaluate_on_test(test_df, predicted_ratings, user_ids, movie_ids):
+    y_true, y_pred = [], []
+    for _, row in test_df.iterrows():
+        uid, mid, true_rating = row['userId'], row['movieId'], row['rating']
+        if uid in user_ids and mid in movie_ids:
+            user_idx = list(user_ids).index(uid)
+            movie_idx = list(movie_ids).get_loc(mid)
+            pred_rating = predicted_ratings[user_idx][movie_idx]
+            y_true.append(true_rating)
+            y_pred.append(pred_rating)
+    rmse = sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+    return rmse, mae
 
-rmse = sqrt(mean_squared_error(actual, predicted))
-mae = mean_absolute_error(actual, predicted)
+def predict_content_rating(user_id, movie_id):
+    if movie_id not in indices.values or user_id not in user_ids:
+        return None
+    movie_idx = list(movies['movieId']).index(movie_id)
+    sim_scores = list(enumerate(cosine_sim[movie_idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    
+    user_rated = rating_matrix.loc[user_id]
+    weighted_sum = 0
+    sim_total = 0
 
+    for idx, score in sim_scores:
+        sim_movie_id = movies.iloc[idx]['movieId']
+        if sim_movie_id in rating_matrix.columns and not np.isnan(user_rated.get(sim_movie_id, np.nan)):
+            rating = user_rated[sim_movie_id]
+            weighted_sum += score * rating
+            sim_total += score
+        if sim_total > 0 and len(user_rated[user_rated > 0]) > 0:
+            break
+
+    return weighted_sum / sim_total if sim_total > 0 else np.nan
+
+def predict_hybrid_rating(user_id, movie_id):
+    collab_rating = None
+    content_rating = None
+
+    if user_id in user_ids and movie_id in movie_ids:
+        user_idx = list(user_ids).index(user_id)
+        movie_idx = list(movie_ids).get_loc(movie_id)
+        collab_rating = predicted_ratings[user_idx][movie_idx]
+
+    content_rating = predict_content_rating(user_id, movie_id)
+
+    if content_rating is not None and collab_rating is not None:
+        return (collab_rating + content_rating) / 2
+    elif collab_rating is not None:
+        return collab_rating
+    elif content_rating is not None:
+        return content_rating
+    else:
+        return np.nan
+
+def evaluate_model(model_predict_func, test_df):
+    y_true, y_pred = [], []
+    for _, row in test_df.iterrows():
+        uid, mid, true_rating = row['userId'], row['movieId'], row['rating']
+        pred = model_predict_func(uid, mid)
+        if pred is not None and not np.isnan(pred):
+            y_true.append(true_rating)
+            y_pred.append(pred)
+    rmse = sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+    return rmse, mae
 
 def evaluate_top_n(user_id, top_n=10, threshold=4.0):
     if user_id not in user_ids:
         return None
-    
+
     user_idx = list(user_ids).index(user_id)
     actual_ratings = rating_matrix.iloc[user_idx]
     predicted_ratings_user = predicted_ratings[user_idx]
-    
+
     actual_relevant = set(actual_ratings[actual_ratings >= threshold].index)
     top_indices = predicted_ratings_user.argsort()[::-1][:top_n]
     predicted_top_n = set(movie_ids[top_indices])
-    
+
     true_positives = len(actual_relevant & predicted_top_n)
     precision = true_positives / len(predicted_top_n) if predicted_top_n else 0
     recall = true_positives / len(actual_relevant) if actual_relevant else 0
     f1 = 2 * (precision * recall) / (precision + recall) if precision + recall else 0
-    
+
     return precision, recall, f1
 
+# ================== Streamlit App ==================
 
-
-# واجهة Streamlit
 st.set_page_config(page_title="🎬 Hybrid Movie Recommender", layout="centered")
 st.title("🎬 Hybrid Movie Recommendation System")
 
 option = st.selectbox("Select recommendation type:",
-                      ["Based on Movie Title", "Based on User ID", "Hybrid Recommendation","Evaluate System"])
+                      ["Based on Movie Title", "Based on User ID", "Hybrid Recommendation", "Evaluate System"])
 
 if option == "Based on Movie Title":
     movie_name = st.text_input("Enter movie title:")
@@ -132,24 +199,7 @@ elif option == "Based on User ID":
         st.write(f"Recommendations for User ID: **{user_id}**")
         st.dataframe(get_collab_recommendations(user_id))
 
-elif option == "Evaluate System":
-    st.subheader("🔍 Evaluation Metrics")
-    
-    st.write(f"**RMSE:** {rmse:.4f}")
-    st.write(f"**MAE:** {mae:.4f}")
-    
-    sample_user_ids = [1, 2, 3]
-    st.write("Top-N Recommendation Evaluation (for sample users):")
-    for uid in sample_user_ids:
-        metrics = evaluate_top_n(uid)
-        if metrics:
-            p, r, f1 = metrics
-            st.write(f"User {uid} - Precision: {p:.2f}, Recall: {r:.2f}, F1-Score: {f1:.2f}")
-        else:
-            st.write(f"User {uid} not found.")
-
-
-else:  # Hybrid
+elif option == "Hybrid Recommendation":
     user_id = st.number_input("Enter user ID:", min_value=1, step=1, key="hybrid_user")
     movie_name = st.text_input("Enter movie title:", key="hybrid_title")
     if st.button("Get Recommendations"):
@@ -159,3 +209,31 @@ else:  # Hybrid
         else:
             st.warning("Please enter a movie title.")
 
+elif option == "Evaluate System":
+    st.subheader("🔍 Evaluation Metrics")
+
+    # Collaborative Filtering
+    rmse_c, mae_c = evaluate_on_test(test_data, predicted_ratings, user_ids, movie_ids)
+    st.write(f"📈 **Collaborative Filtering:**")
+    st.write(f"RMSE: {rmse_c:.4f}, MAE: {mae_c:.4f}")
+
+    # Content-Based
+    rmse_cb, mae_cb = evaluate_model(predict_content_rating, test_data)
+    st.write(f"📘 **Content-Based Filtering:**")
+    st.write(f"RMSE: {rmse_cb:.4f}, MAE: {mae_cb:.4f}")
+
+    # Hybrid
+    rmse_h, mae_h = evaluate_model(predict_hybrid_rating, test_data)
+    st.write(f"🔀 **Hybrid Model:**")
+    st.write(f"RMSE: {rmse_h:.4f}, MAE: {mae_h:.4f}")
+
+    st.markdown("---")
+    st.write("🎯 **Top-N Precision/Recall/F1 (sample users):**")
+    sample_user_ids = [1, 2, 3]
+    for uid in sample_user_ids:
+        metrics = evaluate_top_n(uid)
+        if metrics:
+            p, r, f1 = metrics
+            st.write(f"User {uid} - Precision: {p:.2f}, Recall: {r:.2f}, F1-Score: {f1:.2f}")
+        else:
+            st.write(f"User {uid} not found.")
